@@ -61,9 +61,11 @@ jobs:
           aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
       - name: Test App Content
         run: |
-          PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].PublicIpAddress" --output text)
+          PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
           if [ -z "$PUBLIC_IP" ]; then echo "No public IP found for prod instances"; exit 1; fi
-          curl --fail http://$PUBLIC_IP | grep "Version"
+          echo "Testing Nginx and index.html on $PUBLIC_IP"
+          curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP || { echo "Curl failed, checking instance logs..."; exit 1; }
+          curl --fail http://$PUBLIC_IP | grep "Version" || { echo "Version not found in response"; exit 1; }
       - name: Notify via SNS
         if: always()
         run: |
