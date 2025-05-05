@@ -1,3 +1,5 @@
 output "web_url" {
-  value = "http://${module.ec2.asg_name}"
+  description = "URL of the web application (Dev environment)"
+  value       = "http://${aws_instance.web.public_ip}"
+  depends_on  = [module.ec2]
 }
