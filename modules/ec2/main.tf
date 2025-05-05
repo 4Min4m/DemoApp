@@ -92,6 +92,7 @@ resource "aws_cloudwatch_metric_alarm" "scale_up_alarm" {
   alarm_name          = "${var.environment}-scale-up-alarm"
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
+  statistic           = "Average"
   threshold           = 70
   comparison_operator = "GreaterThanThreshold"
   period              = 300
@@ -160,6 +161,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu" {
   alarm_name          = "${var.environment}-high-cpu"
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
+  statistic           = "Average"
   threshold           = 80
   comparison_operator = "GreaterThanThreshold"
   period              = 300
