@@ -27,7 +27,6 @@ jobs:
         run: terraform validate
       - name: Terraform Plan
         run: terraform plan -out=tfplan
-        if: github.event_name == 'pull_request'
       - name: Terraform Apply Dev
         run: terraform apply -auto-approve tfplan
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
