@@ -7,10 +7,18 @@ on:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      - name: Verify AWS Credentials
+        run: aws sts get-caller-identity
       - name: Check App File
         run: test -f app/index.html || (echo "index.html missing!" && exit 1)
       - name: Terraform Init
@@ -20,39 +28,33 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -out=tfplan
         if: github.event_name == 'pull_request'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       - name: Terraform Apply Dev
         run: terraform apply -auto-approve tfplan
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   deploy-prod:
     needs: terraform
     environment: production
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
       - name: Terraform Init
         run: terraform init
       - name: Terraform Apply Prod
         run: terraform apply -var="environment=prod" -auto-approve
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       - name: Test App Content
         run: |
           PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].PublicIpAddress" --output text)
           curl --fail http://$PUBLIC_IP | grep "Version"
-      - name: Notify Slack
+      - name: Notify via SNS
         if: always()
-        uses: slackapi/slack-github-action@v1.23.0
-        with:
-          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
-          channel-id: "ci-cd-alerts"
-          text: "Pipeline ${{ job.status }} for ${{ github.repository }}"
+        run: |
+          aws sns publish --topic-arn ${{ secrets.SNS_TOPIC_ARN }} --message "Pipeline ${{ job.status }} for ${{ github.repository }}"

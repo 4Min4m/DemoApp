@@ -5,10 +5,12 @@ This is a lightweight AWS infrastructure demo showcasing Terraform, CI/CD, monit
 ## Architecture
 - **VPC**: Two public subnets in different AZs (us-east-1a, us-east-1b).
 - **EC2**: Auto Scaling Group with Spot Instances running Nginx.
+- **Auto Scaling Group**: Runs Nginx web servers across AZs.
 - **S3**: Stores Terraform State and backups.
 - **DynamoDB**: State locking.
 - **CloudWatch**: Monitors CPU and triggers scaling.
 - **Route 53**: Health Checks for High Availability.
+- **SNS**: Sends email alerts
 - **VPC Endpoint**: Reduces S3 latency.
 - **IAM Role**: Prepares for AWS X-Ray.
 

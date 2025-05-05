@@ -8,6 +8,7 @@ terraform {
     key            = "demo/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-locks"
+    encrypt        = true
   }
 }
 
@@ -36,9 +37,9 @@ resource "aws_s3_bucket" "backup" {
 }
 
 resource "aws_s3_object" "index_html" {
-  bucket = aws_s3_bucket.backup.bucket
-  key    = "index.html"
-  source = "app/index.html"
+  bucket       = aws_s3_bucket.backup.bucket
+  key          = "index.html"
+  source       = "app/index.html"
   content_type = "text/html"
 }
 

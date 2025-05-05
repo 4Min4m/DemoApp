@@ -1,0 +1,50 @@
+# Terraform files
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+*.tfvars
+*.tfvars.json
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# AWS CLI files
+.aws/
+awscliv2.zip
+aws/
+
+# Local environment files
+.env
+*.env
+
+# Logs and temporary files
+*.log
+*.log.*
+*.bak
+*.tmp
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS specific
+.DS_Store
+
+# Python virtual environments (if applicable)
+venv/
+.env/
+virtualenv/
+*.pyc
+__pycache__/
+
+# Other
+*.bak
+*.gho
+*.orig
+*.rej
+*.sublime-*
+node_modules/

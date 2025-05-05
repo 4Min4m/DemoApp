@@ -5,7 +5,8 @@ resource "aws_launch_template" "web" {
   user_data     = base64encode(<<-EOF
                   #!/bin/bash
                   yum update -y
-                  yum install -y nginx awslogs aws-cli
+                  yum install -y nginx awslogs aws-cli epel-release
+                  yum install -y stress
                   systemctl start nginx
                   systemctl enable nginx
                   systemctl start awslogsd
@@ -29,6 +30,30 @@ resource "aws_launch_template" "web" {
       Project     = "Demo"
     }
   }
+}
+
+resource "aws_iam_role_policy" "ec2_policy" {
+  role = aws_iam_role.ec2_role.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+          "s3:GetObject"
+        ]
+        Resource = [
+          "*",
+          "arn:aws:s3:::my-app-backup-demo/*"
+        ]
+      }
+    ]
+  })
 }
 
 resource "aws_autoscaling_group" "web" {
@@ -107,30 +132,6 @@ resource "aws_iam_role" "ec2_role" {
         Effect    = "Allow"
         Principal = { Service = "ec2.amazonaws.com" }
         Action    = "sts:AssumeRole"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "ec2_policy" {
-  role = aws_iam_role.ec2_role.name
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "xray:PutTraceSegments",
-          "xray:PutTelemetryRecords",
-          "s3:GetObject"
-        ]
-        Resource = [
-          "*",
-          "arn:aws:s3:::my-app-backup-demo/*"
-        ]
       }
     ]
   })
