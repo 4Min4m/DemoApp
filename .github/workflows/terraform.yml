@@ -48,7 +48,7 @@ jobs:
       - name: Terraform Init
         run: terraform init
       - name: Debug Environment Variable
-        run: echo "Environment variable: prod"
+        run: echo Environment=prod
       - name: Terraform Refresh
         run: terraform refresh -var="environment=prod"
       - name: Terraform Apply Prod
