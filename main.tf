@@ -23,7 +23,7 @@ module "ec2" {
   environment   = var.environment
   vpc_id        = module.vpc.vpc_id
   subnet_ids    = module.vpc.subnet_ids
-  ami_id        = "ami-0c55b159cbfafe1f0"
+  ami_id        = "ami-08b9ea139541d36ab"
   instance_type = var.environment == "prod" ? "t3.medium" : "t2.micro"
 }
 
