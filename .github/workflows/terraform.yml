@@ -59,6 +59,8 @@ jobs:
           aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
           echo "Listing EC2 Instances for prod:"
           aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
+          echo "Checking Security Group for port 80:"
+          aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[].{GroupId:GroupId,IpPermissions:IpPermissions[?ToPort==\`80\`].IpRanges}" --output json
       - name: Test App Content
         run: |
           PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
@@ -66,7 +68,3 @@ jobs:
           echo "Testing Nginx and index.html on $PUBLIC_IP"
           curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP || { echo "Curl failed, likely Nginx or network issue"; exit 1; }
           curl --fail http://$PUBLIC_IP | grep "Version" || { echo "Version not found, check index.html on instance"; exit 1; }
-      - name: Notify via SNS
-        if: always()
-        run: |
-          aws sns publish --topic-arn ${{ secrets.SNS_TOPIC_ARN }} --message "Pipeline ${{ job.status }} for ${{ github.repository }}"
