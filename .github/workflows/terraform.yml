@@ -47,10 +47,17 @@ jobs:
           terraform_version: 1.5.0
       - name: Terraform Init
         run: terraform init
+      - name: Debug Environment Variable
+        run: echo "Environment variable: prod"
+      - name: Terraform Refresh
+        run: terraform refresh -var="environment=prod"
       - name: Terraform Apply Prod
         run: terraform apply -var="environment=prod" -auto-approve
       - name: Debug EC2 Instances
         run: |
+          echo "Listing Auto Scaling Groups for prod:"
+          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
+          echo "Listing EC2 Instances for prod:"
           aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
       - name: Test App Content
         run: |
