@@ -39,9 +39,25 @@ resource "aws_iam_role_policy" "ec2_policy" {
           "logs:PutLogEvents"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:UpdateInstanceInformation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
       }
     ]
   })
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_policy" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
@@ -78,18 +94,32 @@ resource "aws_launch_template" "web" {
   user_data     = base64encode(<<-EOF
                   #!/bin/bash
                   set -ex
+                  
+                  # Update system and install required packages
                   yum update -y --skip-broken
-                  yum install -y nginx
+                  yum install -y nginx aws-cli
+
+                  # Create necessary directories
                   mkdir -p /usr/share/nginx/html
-                  echo '<!DOCTYPE html><html><body><h1>Demo App</h1><p>Version: 1.0</p></body></html>' > /usr/share/nginx/html/index.html
+                  
+                  # Download index.html from S3
+                  aws s3 cp s3://my-app-backup-demo/index.html /usr/share/nginx/html/index.html
+                  
+                  # Set appropriate permissions
                   chmod 644 /usr/share/nginx/html/index.html
                   chown nginx:nginx /usr/share/nginx/html/index.html
+                  
+                  # Start and enable nginx
                   systemctl start nginx
                   systemctl enable nginx
+                  
+                  # Configure firewall if it exists
                   if [ -x "$(command -v firewall-cmd)" ]; then
                     firewall-cmd --permanent --zone=public --add-service=http
                     firewall-cmd --reload
                   fi
+                  
+                  # Restart nginx and verify it's running
                   systemctl restart nginx
                   curl -s http://localhost
                   echo "Setup complete"
