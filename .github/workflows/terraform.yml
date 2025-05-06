@@ -137,7 +137,7 @@ jobs:
       - name: Test App Content
         run: |
           echo "Checking S3 bucket content:"
-          aws s3 ls s3://my-app-backup-demo-prod/
+          aws s3 ls s3://my-app-backup-demo/
           PUBLIC_IPS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].PublicIpAddress" --output text)
           echo "Found public IPs: $PUBLIC_IPS"
