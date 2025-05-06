@@ -158,7 +158,7 @@ jobs:
               fi
             else
               echo "Curl failed on $IP, HTTP response code: $?"
-              INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=public-ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
+              INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
               if [ -n "$INSTANCE_ID" ]; then
                 echo "Fetching Cloud-Init log from instance $INSTANCE_ID"
                 aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name "AWS-RunShellScript" --parameters '{"commands":["cat /var/log/cloud-init-output.log"]}' --query "Command.CommandId" --output text > command_id.txt
