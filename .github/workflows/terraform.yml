@@ -60,6 +60,20 @@ jobs:
             aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
             aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
           fi
+      - name: Clean Stale IAM Instance Profiles
+        run: |
+          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='${{ env.ENVIRONMENT }}-ec2-profile'].InstanceProfileName" --output text)
+          if [ -n "$PROFILE_NAME" ]; then
+            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "${{ env.ENVIRONMENT }}-ec2-role"
+            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME"
+          fi
+          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='${{ env.ENVIRONMENT }}-ec2-role'].RoleName" --output text)
+          if [ -n "$ROLE_NAME" ]; then
+            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "${{ env.ENVIRONMENT }}-ec2-policy"
+            aws iam delete-role --role-name "$ROLE_NAME"
+          fi
+        env:
+          ENVIRONMENT: prod
       - name: Terraform Init
         run: terraform init
       - name: Debug Environment Variable
