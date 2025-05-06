@@ -11,18 +11,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-          
       - name: Check App File
         run: test -f app/index.html || (echo "index.html missing!" && exit 1)
-      
       - name: Terraform Init
         run: terraform init -backend=false
-      
       - name: Terraform Validate
         run: terraform validate
 
@@ -37,21 +33,39 @@ jobs:
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
-      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-          
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
-      
+      - name: Clean Stale IAM Resources for Dev
+        run: |
+          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='dev-ec2-profile'].InstanceProfileName" --output text)
+          if [ -n "$PROFILE_NAME" ]; then
+            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "dev-ec2-role" || true
+            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" || true
+          fi
+          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='dev-ec2-role'].RoleName" --output text)
+          if [ -n "$ROLE_NAME" ]; then
+            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "dev-ec2-policy" || true
+            aws iam delete-role --role-name "$ROLE_NAME" || true
+          fi
+      - name: Clean Stale Auto Scaling Groups for Dev
+        run: |
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].AutoScalingGroupName" --output text)
+          if [ -n "$ASG_NAME" ]; then
+            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
+            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
+          fi
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
         run: terraform init
-      
+      - name: Terraform Workspace
+        run: |
+          terraform workspace select dev 2>/dev/null || terraform workspace new dev
       - name: Terraform Plan Dev
         run: terraform plan -var="environment=dev" -out=tfplan
-      
       - name: Terraform Apply Dev
         run: terraform apply -auto-approve tfplan
 
@@ -66,78 +80,66 @@ jobs:
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
-      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
-      
-      # Clean up resources properly in the correct order to avoid dependency issues
-      - name: Prepare for Prod Deployment
+      - name: Clean Stale IAM Resources for Prod
         run: |
-          echo "Preparing for production deployment..."
-          
-          # Gracefully clean up the ASG first - scale down to 0 instances
-          PROD_ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].AutoScalingGroupName" --output text)
-          if [ -n "$PROD_ASG_NAME" ]; then
-            echo "Scaling down production ASG $PROD_ASG_NAME before replacement"
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$PROD_ASG_NAME" --desired-capacity 0 --min-size 0
-            # Wait for instances to terminate
-            aws autoscaling wait group-in-service --auto-scaling-group-name "$PROD_ASG_NAME"
+          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='prod-ec2-profile'].InstanceProfileName" --output text)
+          if [ -n "$PROFILE_NAME" ]; then
+            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "prod-ec2-role" || true
+            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" || true
           fi
-      
+          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='prod-ec2-role'].RoleName" --output text)
+          if [ -n "$ROLE_NAME" ]; then
+            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "prod-ec2-policy" || true
+            aws iam delete-role --role-name "$ROLE_NAME" || true
+          fi
+      - name: Clean Stale Auto Scaling Groups for Prod
+        run: |
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].AutoScalingGroupName" --output text)
+          if [ -n "$ASG_NAME" ]; then
+            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
+            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
+          fi
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
         run: terraform init
-      
       - name: Terraform Workspace
         run: |
           terraform workspace select prod 2>/dev/null || terraform workspace new prod
-      
       - name: Terraform Plan Prod
-        run: |
-          # Import any existing resources if needed
-          terraform plan -var="environment=prod" -out=tfplan-prod
-      
+        run: terraform plan -var="environment=prod" -out=tfplan-prod
       - name: Terraform Apply Prod
         run: terraform apply -auto-approve tfplan-prod
-      
       - name: Wait for Deployment
         run: |
           echo "Waiting for instances to be ready..."
-          sleep 60  # Give EC2 instances time to initialize
-      
+          sleep 60
       - name: Test App Content
         run: |
-          # Get first available instance with public IP
           PUBLIC_IP=""
           RETRY_COUNT=0
           MAX_RETRIES=10
-          
           while [ -z "$PUBLIC_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
-            
             if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
               echo "No public IP found yet, waiting..."
               sleep 30
               RETRY_COUNT=$((RETRY_COUNT+1))
             fi
           done
-          
           if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
             echo "No public IP found for prod instances after $MAX_RETRIES retries"
             exit 1
           fi
-          
           echo "Testing Nginx and index.html on $PUBLIC_IP"
-          
-          # Test with retry mechanism
           RETRY_COUNT=0
           MAX_RETRIES=5
           SUCCESS=false
-          
           while [ "$SUCCESS" = false ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             if curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP; then
               if curl --fail http://$PUBLIC_IP | grep "Version"; then
@@ -154,7 +156,6 @@ jobs:
               sleep 10
             fi
           done
-          
           if [ "$SUCCESS" = false ]; then
             echo "Failed to verify web content after $MAX_RETRIES attempts"
             exit 1
@@ -171,12 +172,13 @@ jobs:
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
-      
-      - name: Scale Down Dev Environment
-        run: |
-          # Scale down dev ASG to save costs
-          DEV_ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].AutoScalingGroupName" --output text)
-          if [ -n "$DEV_ASG_NAME" ]; then
-            echo "Scaling down dev ASG $DEV_ASG_NAME to save costs"
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$DEV_ASG_NAME" --desired-capacity 0 --min-size 0
-          fi
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Workspace
+        run: terraform workspace select dev 2>/dev/null || terraform workspace new dev
+      - name: Destroy Dev Environment
+        run: terraform destroy -var="environment=dev" -auto-approve
