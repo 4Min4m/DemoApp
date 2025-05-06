@@ -1,7 +1,5 @@
 name: Terraform CI/CD
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -25,7 +23,6 @@ jobs:
   terraform-dev:
     name: Deploy Dev Environment
     needs: terraform-validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -39,40 +36,12 @@ jobs:
           terraform_version: 1.5.0
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
-      - name: Clean Stale State and Locks for Dev
+      - name: Clean Stale State and Locks
         run: |
           aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
           aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
             aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
           done
-      - name: Clean Stale IAM Resources for Dev
-        run: |
-          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='dev-ec2-profile'].InstanceProfileName" --output text)
-          if [ -n "$PROFILE_NAME" ]; then
-            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "dev-ec2-role" || true
-            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" || true
-          fi
-          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='dev-ec2-role'].RoleName" --output text)
-          if [ -n "$ROLE_NAME" ]; then
-            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "dev-ec2-policy" || true
-            aws iam delete-role --role-name "$ROLE_NAME" || true
-          fi
-      - name: Clean Stale Auto Scaling Groups for Dev
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].AutoScalingGroupName" --output text)
-          if [ -n "$ASG_NAME" ]; then
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
-            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
-            echo "Waiting for ASG $ASG_NAME to be deleted..."
-            for i in {1..10}; do
-              if ! aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query "AutoScalingGroups[0]" --output text >/dev/null 2>&1; then
-                echo "ASG $ASG_NAME deleted"
-                break
-              fi
-              sleep 30
-            done
-          fi
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
         run: terraform init
       - name: Terraform Workspace
@@ -85,14 +54,13 @@ jobs:
       - name: Debug Dev Resources
         run: |
           echo "Listing Auto Scaling Groups for dev:"
-          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
+          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity}" --output json
           echo "Listing EC2 Instances for dev:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name}" --output json
 
   terraform-prod:
     name: Deploy Production Environment
     needs: terraform-dev
-    environment: production
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -106,40 +74,12 @@ jobs:
           terraform_version: 1.5.0
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
-      - name: Clean Stale State and Locks for Prod
+      - name: Clean Stale State and Locks
         run: |
           aws s3 rm s3://my-terraform-state-demo-231/env:prod/ --recursive || true
           aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:prod" | while read -r LOCK_ID; do
             aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
           done
-      - name: Clean Stale IAM Resources for Prod
-        run: |
-          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='prod-ec2-profile'].InstanceProfileName" --output text)
-          if [ -n "$PROFILE_NAME" ]; then
-            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "prod-ec2-role" || true
-            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" || true
-          fi
-          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='prod-ec2-role'].RoleName" --output text)
-          if [ -n "$ROLE_NAME" ]; then
-            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "prod-ec2-policy" || true
-            aws iam delete-role --role-name "$ROLE_NAME" || true
-          fi
-      - name: Clean Stale Auto Scaling Groups for Prod
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].AutoScalingGroupName" --output text)
-          if [ -n "$ASG_NAME" ]; then
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
-            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
-            echo "Waiting for ASG $ASG_NAME to be deleted..."
-            for i in {1..10}; do
-              if ! aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query "AutoScalingGroups[0]" --output text >/dev/null 2>&1; then
-                echo "ASG $ASG_NAME deleted"
-                break
-              fi
-              sleep 30
-            done
-          fi
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
         run: terraform init
       - name: Terraform Workspace
@@ -149,10 +89,35 @@ jobs:
         run: terraform plan -var="environment=prod" -out=tfplan-prod
       - name: Terraform Apply Prod
         run: terraform apply -auto-approve tfplan-prod
-      - name: Wait Longer for Deployment
+      - name: Wait for Deployment
         run: |
           echo "Waiting for instances to be fully initialized..."
-          sleep 120
+          RETRY_COUNT=0
+          MAX_RETRIES=10
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text)
+            if [ -n "$INSTANCE_IDS" ]; then
+              ALL_READY=true
+              for ID in $INSTANCE_IDS; do
+                STATUS=$(aws ec2 describe-instance-status --instance-ids $ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
+                if [ "$STATUS" != "ok" ]; then
+                  ALL_READY=false
+                  break
+                fi
+              done
+              if [ "$ALL_READY" = true ]; then
+                echo "All instances are ready"
+                break
+              fi
+            fi
+            echo "Instances not ready yet, waiting..."
+            sleep 30
+            RETRY_COUNT=$((RETRY_COUNT+1))
+          done
+          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "Timeout waiting for instances to be ready"
+            exit 1
+          fi
       - name: Verify Security Group
         run: |
           SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
@@ -161,22 +126,18 @@ jobs:
             aws ec2 describe-security-groups --group-ids $SG_ID
           else
             echo "WARNING: Could not find security group for prod environment"
+            exit 1
           fi
       - name: Debug Prod Resources
         run: |
           echo "Listing Auto Scaling Groups for prod:"
-          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
+          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity}" --output json
           echo "Listing EC2 Instances for prod:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
-          echo "Checking Security Group for port 80:"
-          aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[].{GroupId:GroupId,IpPermissions:IpPermissions[?ToPort==\`80\`].IpRanges}" --output json
-      - name: Test App Content with Debug Info
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name}" --output json
+      - name: Test App Content
         run: |
           echo "Checking S3 bucket content:"
-          aws s3 ls s3://my-app-backup-demo/
-          echo "All running prod instances:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[*].[InstanceId,PublicIpAddress,State.Name]" --output table
+          aws s3 ls s3://my-app-backup-demo-prod/
           PUBLIC_IPS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].PublicIpAddress" --output text)
           echo "Found public IPs: $PUBLIC_IPS"
@@ -187,10 +148,7 @@ jobs:
           SUCCESS=false
           for IP in $PUBLIC_IPS; do
             echo "Testing Nginx on $IP"
-            echo "Running curl with verbose output:"
-            curl -v --connect-timeout 10 --max-time 20 http://$IP
-            if curl --fail --connect-timeout 10 --max-time 20 http://$IP; then
-              echo "Successfully connected to $IP"
+            if curl --fail --connect-timeout 10 --max-time 30 http://$IP; then
               if curl --fail http://$IP | grep "Version"; then
                 echo "Successfully verified Version in index.html on $IP"
                 SUCCESS=true
@@ -200,6 +158,13 @@ jobs:
               fi
             else
               echo "Curl failed on $IP, HTTP response code: $?"
+              INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=public-ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
+              if [ -n "$INSTANCE_ID" ]; then
+                echo "Fetching Cloud-Init log from instance $INSTANCE_ID"
+                aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name "AWS-RunShellScript" --parameters '{"commands":["cat /var/log/cloud-init-output.log"]}' --query "Command.CommandId" --output text > command_id.txt
+                sleep 10
+                aws ssm get-command-invocation --command-id "$(cat command_id.txt)" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
+              fi
             fi
           done
           if [ "$SUCCESS" = false ]; then
@@ -210,7 +175,6 @@ jobs:
   cleanup-dev:
     name: Clean Dev Environment
     needs: terraform-prod
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -222,7 +186,7 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      - name: Clean Stale State and Locks for Dev
+      - name: Clean Stale State and Locks
         run: |
           aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
           aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
