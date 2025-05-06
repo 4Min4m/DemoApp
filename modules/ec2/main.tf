@@ -119,6 +119,11 @@ resource "aws_autoscaling_group" "web" {
     value               = var.environment
     propagate_at_launch = true
   }
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+  
   tag {
     key                 = "Project"
     value               = "Demo"
