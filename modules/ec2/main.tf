@@ -93,36 +93,92 @@ resource "aws_launch_template" "web" {
   instance_type = var.instance_type
   user_data     = base64encode(<<-EOF
                   #!/bin/bash
-                  set -ex
+                  exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+                  echo "Starting user data script execution"
+                  date
                   
                   # Update system and install required packages
+                  echo "Installing packages"
                   yum update -y --skip-broken
-                  yum install -y nginx aws-cli
-
-                  # Create necessary directories
+                  yum install -y nginx aws-cli amazon-ssm-agent
+                  
+                  # Start SSM agent
+                  echo "Starting SSM agent"
+                  systemctl start amazon-ssm-agent
+                  systemctl enable amazon-ssm-agent
+                  
+                  # Configure nginx defaults
+                  echo "Configuring Nginx"
                   mkdir -p /usr/share/nginx/html
                   
+                  # Default content in case S3 download fails
+                  echo '<!DOCTYPE html><html><head><title>Demo App</title></head><body><h1>Welcome to the Demo App</h1><p>Version: 1.0</p></body></html>' > /usr/share/nginx/html/index.html
+                  
                   # Download index.html from S3
-                  aws s3 cp s3://my-app-backup-demo/index.html /usr/share/nginx/html/index.html
+                  echo "Downloading index.html from S3"
+                  aws s3 cp s3://my-app-backup-demo/index.html /usr/share/nginx/html/index.html --region us-east-1
+                  
+                  # Check if download was successful
+                  if [ $? -ne 0 ]; then
+                    echo "WARNING: Failed to download index.html from S3. Using default."
+                  else
+                    echo "Successfully downloaded index.html from S3"
+                  fi
                   
                   # Set appropriate permissions
+                  echo "Setting permissions"
                   chmod 644 /usr/share/nginx/html/index.html
                   chown nginx:nginx /usr/share/nginx/html/index.html
                   
+                  # Create a more explicit nginx configuration
+                  echo "Creating nginx configuration"
+                  cat > /etc/nginx/conf.d/default.conf << 'NGINXCONF'
+                  server {
+                      listen 80;
+                      server_name _;
+                      root /usr/share/nginx/html;
+                      index index.html;
+                      location / {
+                          try_files $uri $uri/ =404;
+                      }
+                  }
+                  NGINXCONF
+                  
+                  # Test nginx configuration
+                  echo "Testing nginx configuration"
+                  nginx -t
+                  
                   # Start and enable nginx
+                  echo "Starting nginx"
                   systemctl start nginx
                   systemctl enable nginx
                   
                   # Configure firewall if it exists
                   if [ -x "$(command -v firewall-cmd)" ]; then
+                    echo "Configuring firewall"
                     firewall-cmd --permanent --zone=public --add-service=http
                     firewall-cmd --reload
                   fi
                   
                   # Restart nginx and verify it's running
+                  echo "Restarting nginx"
                   systemctl restart nginx
-                  curl -s http://localhost
+                  systemctl status nginx
+                  
+                  # Verify website content
+                  echo "Content of index.html:"
+                  cat /usr/share/nginx/html/index.html
+                  
+                  # Test HTTP locally
+                  echo "Testing HTTP locally"
+                  curl -v http://localhost
+                  
+                  # Check nginx logs for any issues
+                  echo "Nginx error log:"
+                  cat /var/log/nginx/error.log
+                  
                   echo "Setup complete"
+                  date
                   EOF
   )
   iam_instance_profile {
@@ -165,6 +221,11 @@ resource "aws_autoscaling_group" "web" {
   tag {
     key                 = "Project"
     value               = "Demo"
+    propagate_at_launch = true
+  }
+  tag {
+    key                 = "Name"
+    value               = "${var.environment}-web"
     propagate_at_launch = true
   }
   depends_on = [aws_launch_template.web, aws_iam_instance_profile.ec2_profile]

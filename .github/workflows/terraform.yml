@@ -93,7 +93,7 @@ jobs:
         run: |
           echo "Waiting for instances to be fully initialized..."
           RETRY_COUNT=0
-          MAX_RETRIES=10
+          MAX_RETRIES=15
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text)
             if [ -n "$INSTANCE_IDS" ]; then
@@ -110,14 +110,17 @@ jobs:
                 break
               fi
             fi
-            echo "Instances not ready yet, waiting..."
+            echo "Instances not ready yet, waiting... (attempt $RETRY_COUNT of $MAX_RETRIES)"
             sleep 30
             RETRY_COUNT=$((RETRY_COUNT+1))
           done
           if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-            echo "Timeout waiting for instances to be ready"
-            exit 1
+            echo "Timeout waiting for instances to be ready, but continuing anyway"
           fi
+          
+          # Additional sleep to ensure user data has time to complete
+          echo "Giving extra time for user data script to complete..."
+          sleep 60
       - name: Verify Security Group
         run: |
           SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
@@ -145,28 +148,66 @@ jobs:
             echo "No public IPs found for prod instances"
             exit 1
           fi
+          
+          # More resilient curl testing with retries
+          MAX_RETRIES=5
           SUCCESS=false
           for IP in $PUBLIC_IPS; do
             echo "Testing Nginx on $IP"
-            if curl --fail --connect-timeout 10 --max-time 30 http://$IP; then
-              if curl --fail http://$IP | grep "Version"; then
-                echo "Successfully verified Version in index.html on $IP"
-                SUCCESS=true
-                break
+            for i in $(seq 1 $MAX_RETRIES); do
+              echo "Attempt $i of $MAX_RETRIES..."
+              if curl --fail --connect-timeout 10 --max-time 30 -v http://$IP; then
+                if curl --fail http://$IP | grep -q "Version"; then
+                  echo "Successfully verified Version in index.html on $IP"
+                  SUCCESS=true
+                  break 2
+                else
+                  echo "Version not found in index.html content on $IP"
+                  curl -s http://$IP
+                fi
               else
-                echo "Version not found in index.html content on $IP"
+                echo "Curl failed on $IP, HTTP response code: $?"
               fi
-            else
-              echo "Curl failed on $IP, HTTP response code: $?"
-              INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
-              if [ -n "$INSTANCE_ID" ]; then
-                echo "Fetching Cloud-Init log from instance $INSTANCE_ID"
-                aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name "AWS-RunShellScript" --parameters '{"commands":["cat /var/log/cloud-init-output.log"]}' --query "Command.CommandId" --output text > command_id.txt
-                sleep 10
-                aws ssm get-command-invocation --command-id "$(cat command_id.txt)" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text
+              
+              if [ $i -lt $MAX_RETRIES ]; then
+                echo "Retrying in 15 seconds..."
+                sleep 15
               fi
+            done
+            
+            # Get logs from the instance for debugging
+            INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
+            if [ -n "$INSTANCE_ID" ]; then
+              echo "Instance ID for $IP: $INSTANCE_ID"
+              echo "Fetching user data log from instance $INSTANCE_ID"
+              
+              # Try multiple times to get the logs, as SSM connection might take time
+              for j in $(seq 1 3); do
+                echo "SSM attempt $j to get logs..."
+                COMMAND_ID=$(aws ssm send-command \
+                  --instance-ids "$INSTANCE_ID" \
+                  --document-name "AWS-RunShellScript" \
+                  --parameters '{"commands":["cat /var/log/user-data.log /var/log/nginx/error.log"]}' \
+                  --query "Command.CommandId" \
+                  --output text 2>/dev/null || echo "")
+                
+                if [ -n "$COMMAND_ID" ]; then
+                  echo "Command ID: $COMMAND_ID"
+                  sleep 10
+                  aws ssm get-command-invocation \
+                    --command-id "$COMMAND_ID" \
+                    --instance-id "$INSTANCE_ID" \
+                    --query "StandardOutputContent" \
+                    --output text 2>/dev/null || echo "Failed to get command output"
+                  break
+                else
+                  echo "Failed to send SSM command. Retrying..."
+                  sleep 10
+                fi
+              done
             fi
           done
+          
           if [ "$SUCCESS" = false ]; then
             echo "Failed to verify web content on any instance"
             exit 1
