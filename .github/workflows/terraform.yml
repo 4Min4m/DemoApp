@@ -4,110 +4,179 @@ on:
     branches: [main]
   push:
     branches: [main]
+
 jobs:
-  terraform:
+  terraform-validate:
+    name: Validate Terraform Configuration
     runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
+      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      - name: Verify AWS Credentials
-        run: aws sts get-caller-identity
+          
       - name: Check App File
         run: test -f app/index.html || (echo "index.html missing!" && exit 1)
-      - name: Clean Stale IAM Roles for Dev
-        run: |
-          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='${{ env.ENVIRONMENT }}-ec2-profile'].InstanceProfileName" --output text)
-          if [ -n "$PROFILE_NAME" ]; then
-            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "${{ env.ENVIRONMENT }}-ec2-role"
-            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME"
-          fi
-          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='${{ env.ENVIRONMENT }}-ec2-role'].RoleName" --output text)
-          if [ -n "$ROLE_NAME" ]; then
-            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "${{ env.ENVIRONMENT }}-ec2-policy"
-            aws iam delete-role --role-name "$ROLE_NAME"
-          fi
-        env:
-          ENVIRONMENT: dev
+      
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend=false
+      
       - name: Terraform Validate
         run: terraform validate
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan
-      - name: Terraform Apply Dev
-        run: terraform apply -auto-approve tfplan
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  deploy-prod:
-    needs: terraform
-    environment: production
-    runs-on: ubuntu-latest
+
+  terraform-dev:
+    name: Deploy Dev Environment
+    needs: terraform-validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@v3
+      
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      - name: Clean Dev Instances
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].AutoScalingGroupName" --output text)
-          if [ -n "$ASG_NAME" ]; then
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
-            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
-          fi
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
-      - name: Clean Stale Prod Auto Scaling Groups
-        run: |
-          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].AutoScalingGroupName" --output text)
-          if [ -n "$ASG_NAME" ]; then
-            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
-            aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
-          fi
-      - name: Clean Stale IAM Roles for Prod
-        run: |
-          PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='${{ env.ENVIRONMENT }}-ec2-profile'].InstanceProfileName" --output text)
-          if [ -n "$PROFILE_NAME" ]; then
-            aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "${{ env.ENVIRONMENT }}-ec2-role"
-            aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME"
-          fi
-          ROLE_NAME=$(aws iam list-roles --query "Roles[?RoleName=='${{ env.ENVIRONMENT }}-ec2-role'].RoleName" --output text)
-          if [ -n "$ROLE_NAME" ]; then
-            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "${{ env.ENVIRONMENT }}-ec2-policy"
-            aws iam delete-role --role-name "$ROLE_NAME"
-          fi
-        env:
-          ENVIRONMENT: prod
+          
+      - name: Verify AWS Credentials
+        run: aws sts get-caller-identity
+      
       - name: Terraform Init
         run: terraform init
-      - name: Debug Environment Variable
-        run: echo Environment=prod
-      - name: Terraform Refresh
-        run: terraform refresh -var="environment=prod"
-      - name: Terraform Apply Prod
-        run: terraform apply -var="environment=prod" -auto-approve
-      - name: Debug EC2 Instances
+      
+      - name: Terraform Plan Dev
+        run: terraform plan -var="environment=dev" -out=tfplan
+      
+      - name: Terraform Apply Dev
+        run: terraform apply -auto-approve tfplan
+
+  terraform-prod:
+    name: Deploy Production Environment
+    needs: terraform-dev
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      
+      - name: Verify AWS Credentials
+        run: aws sts get-caller-identity
+      
+      # Clean up resources properly in the correct order to avoid dependency issues
+      - name: Prepare for Prod Deployment
         run: |
-          echo "Listing Auto Scaling Groups for prod:"
-          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
-          echo "Listing EC2 Instances for prod:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
-          echo "Checking Security Group for port 80:"
-          aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[].{GroupId:GroupId,IpPermissions:IpPermissions[?ToPort==\`80\`].IpRanges}" --output json
+          echo "Preparing for production deployment..."
+          
+          # Gracefully clean up the ASG first - scale down to 0 instances
+          PROD_ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].AutoScalingGroupName" --output text)
+          if [ -n "$PROD_ASG_NAME" ]; then
+            echo "Scaling down production ASG $PROD_ASG_NAME before replacement"
+            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$PROD_ASG_NAME" --desired-capacity 0 --min-size 0
+            # Wait for instances to terminate
+            aws autoscaling wait group-in-service --auto-scaling-group-name "$PROD_ASG_NAME"
+          fi
+      
+      - name: Terraform Init
+        run: terraform init
+      
+      - name: Terraform Workspace
+        run: |
+          terraform workspace select prod 2>/dev/null || terraform workspace new prod
+      
+      - name: Terraform Plan Prod
+        run: |
+          # Import any existing resources if needed
+          terraform plan -var="environment=prod" -out=tfplan-prod
+      
+      - name: Terraform Apply Prod
+        run: terraform apply -auto-approve tfplan-prod
+      
+      - name: Wait for Deployment
+        run: |
+          echo "Waiting for instances to be ready..."
+          sleep 60  # Give EC2 instances time to initialize
+      
       - name: Test App Content
         run: |
-          PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
-          if [ -z "$PUBLIC_IP" ]; then echo "No public IP found for prod instances"; exit 1; fi
+          # Get first available instance with public IP
+          PUBLIC_IP=""
+          RETRY_COUNT=0
+          MAX_RETRIES=10
+          
+          while [ -z "$PUBLIC_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
+            
+            if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+              echo "No public IP found yet, waiting..."
+              sleep 30
+              RETRY_COUNT=$((RETRY_COUNT+1))
+            fi
+          done
+          
+          if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "No public IP found for prod instances after $MAX_RETRIES retries"
+            exit 1
+          fi
+          
           echo "Testing Nginx and index.html on $PUBLIC_IP"
-          curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP || { echo "Curl failed, likely Nginx or network issue"; exit 1; }
-          curl --fail http://$PUBLIC_IP | grep "Version" || { echo "Version not found, check index.html on instance"; exit 1; }
+          
+          # Test with retry mechanism
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          SUCCESS=false
+          
+          while [ "$SUCCESS" = false ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP; then
+              if curl --fail http://$PUBLIC_IP | grep "Version"; then
+                echo "Successfully verified Version in index.html"
+                SUCCESS=true
+              else
+                echo "Version not found in index.html content"
+                RETRY_COUNT=$((RETRY_COUNT+1))
+                sleep 10
+              fi
+            else
+              echo "Curl failed, retrying in 10 seconds..."
+              RETRY_COUNT=$((RETRY_COUNT+1))
+              sleep 10
+            fi
+          done
+          
+          if [ "$SUCCESS" = false ]; then
+            echo "Failed to verify web content after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+  cleanup-dev:
+    name: Clean Dev Environment
+    needs: terraform-prod
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Scale Down Dev Environment
+        run: |
+          # Scale down dev ASG to save costs
+          DEV_ASG_NAME=$(aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].AutoScalingGroupName" --output text)
+          if [ -n "$DEV_ASG_NAME" ]; then
+            echo "Scaling down dev ASG $DEV_ASG_NAME to save costs"
+            aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$DEV_ASG_NAME" --desired-capacity 0 --min-size 0
+          fi

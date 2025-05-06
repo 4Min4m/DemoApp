@@ -87,7 +87,7 @@ resource "aws_launch_template" "web" {
                   EOF
   )
   iam_instance_profile {
-    name = aws_iam_instance_profile.ec2_profile.name
+    arn = aws_iam_instance_profile.ec2_profile.arn
   }
   network_interfaces {
     associate_public_ip_address = true
@@ -127,4 +127,5 @@ resource "aws_autoscaling_group" "web" {
     value               = "Demo"
     propagate_at_launch = true
   }
+  depends_on = [aws_launch_template.web, aws_iam_instance_profile.ec2_profile]
 }
