@@ -152,7 +152,7 @@ jobs:
             exit 1
           fi
           
-          MAX_RETRIES=5
+          MAX_RETRIES=3
           SUCCESS=false
           for IP in $PUBLIC_IPS; do
             echo "Testing Nginx on $IP"
