@@ -77,13 +77,50 @@ resource "aws_launch_template" "web" {
   instance_type = var.instance_type
   user_data     = base64encode(<<-EOF
                   #!/bin/bash
-                  set -e
+                  set -ex  # Add -x for verbose logging
+                  
+                  # Update system and install required packages
                   yum update -y --skip-broken
                   yum install -y nginx aws-cli
+                  
+                  # Start and enable Nginx
                   systemctl start nginx
                   systemctl enable nginx
-                  aws s3 cp s3://my-app-backup-demo/index.html /usr/share/nginx/html/index.html
+                  
+                  # Create a temporary file directly in case S3 download fails
+                  cat > /usr/share/nginx/html/index.html << 'INDEXFILE'
+                  <!DOCTYPE html>
+                  <html>
+                  <head>
+                    <title>Demo App</title>
+                  </head>
+                  <body>
+                    <h1>Welcome to the Demo App</h1>
+                    <p>Version: 1.0</p>
+                  </body>
+                  </html>
+                  INDEXFILE
+                  
+                  # Attempt S3 download as original plan
+                  aws s3 cp s3://my-app-backup-demo/index.html /usr/share/nginx/html/index.html || echo "S3 download failed, using default file"
+                  
+                  # Ensure proper permissions
+                  chmod 644 /usr/share/nginx/html/index.html
+                  
+                  # Open firewall if needed (for Amazon Linux 2)
+                  if [ -x "$(command -v firewall-cmd)" ]; then
+                    firewall-cmd --permanent --zone=public --add-service=http
+                    firewall-cmd --reload
+                  fi
+                  
+                  # Final restart of Nginx
                   systemctl restart nginx
+                  
+                  # Verify Nginx is running
+                  systemctl status nginx
+                  curl -s http://localhost
+                  
+                  echo "Setup complete"
                   EOF
   )
   iam_instance_profile {

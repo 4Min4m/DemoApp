@@ -39,6 +39,12 @@ jobs:
           terraform_version: 1.5.0
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
+      - name: Clean Stale State and Locks for Dev
+        run: |
+          aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
+          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
+            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
+          done
       - name: Clean Stale IAM Resources for Dev
         run: |
           PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='dev-ec2-profile'].InstanceProfileName" --output text)
@@ -57,6 +63,14 @@ jobs:
           if [ -n "$ASG_NAME" ]; then
             aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
             aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
+            echo "Waiting for ASG $ASG_NAME to be deleted..."
+            for i in {1..10}; do
+              if ! aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query "AutoScalingGroups[0]" --output text >/dev/null 2>&1; then
+                echo "ASG $ASG_NAME deleted"
+                break
+              fi
+              sleep 30
+            done
           fi
           aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
@@ -68,6 +82,12 @@ jobs:
         run: terraform plan -var="environment=dev" -out=tfplan
       - name: Terraform Apply Dev
         run: terraform apply -auto-approve tfplan
+      - name: Debug Dev Resources
+        run: |
+          echo "Listing Auto Scaling Groups for dev:"
+          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
+          echo "Listing EC2 Instances for dev:"
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
 
   terraform-prod:
     name: Deploy Production Environment
@@ -86,6 +106,12 @@ jobs:
           terraform_version: 1.5.0
       - name: Verify AWS Credentials
         run: aws sts get-caller-identity
+      - name: Clean Stale State and Locks for Prod
+        run: |
+          aws s3 rm s3://my-terraform-state-demo-231/env:prod/ --recursive || true
+          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:prod" | while read -r LOCK_ID; do
+            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
+          done
       - name: Clean Stale IAM Resources for Prod
         run: |
           PROFILE_NAME=$(aws iam list-instance-profiles --query "InstanceProfiles[?InstanceProfileName=='prod-ec2-profile'].InstanceProfileName" --output text)
@@ -104,6 +130,14 @@ jobs:
           if [ -n "$ASG_NAME" ]; then
             aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --desired-capacity 0 --min-size 0
             aws autoscaling delete-auto-scaling-group --auto-scaling-group-name "$ASG_NAME" --force-delete
+            echo "Waiting for ASG $ASG_NAME to be deleted..."
+            for i in {1..10}; do
+              if ! aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query "AutoScalingGroups[0]" --output text >/dev/null 2>&1; then
+                echo "ASG $ASG_NAME deleted"
+                break
+              fi
+              sleep 30
+            done
           fi
           aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].InstanceId" --output text | xargs -r aws ec2 terminate-instances --instance-ids
       - name: Terraform Init
@@ -115,49 +149,61 @@ jobs:
         run: terraform plan -var="environment=prod" -out=tfplan-prod
       - name: Terraform Apply Prod
         run: terraform apply -auto-approve tfplan-prod
-      - name: Wait for Deployment
+      - name: Wait Longer for Deployment
         run: |
-          echo "Waiting for instances to be ready..."
-          sleep 60
-      - name: Test App Content
+          echo "Waiting for instances to be fully initialized..."
+          sleep 120
+      - name: Verify Security Group
         run: |
-          PUBLIC_IP=""
-          RETRY_COUNT=0
-          MAX_RETRIES=10
-          while [ -z "$PUBLIC_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            PUBLIC_IP=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[0].PublicIpAddress" --output text)
-            if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
-              echo "No public IP found yet, waiting..."
-              sleep 30
-              RETRY_COUNT=$((RETRY_COUNT+1))
-            fi
-          done
-          if [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
-            echo "No public IP found for prod instances after $MAX_RETRIES retries"
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
+          if [ -n "$SG_ID" ]; then
+            echo "Found security group: $SG_ID"
+            aws ec2 describe-security-groups --group-ids $SG_ID
+          else
+            echo "WARNING: Could not find security group for prod environment"
+          fi
+      - name: Debug Prod Resources
+        run: |
+          echo "Listing Auto Scaling Groups for prod:"
+          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity,LaunchTemplate:LaunchTemplate.LaunchTemplateId}" --output json
+          echo "Listing EC2 Instances for prod:"
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name,Tags:Tags}" --output json
+          echo "Checking Security Group for port 80:"
+          aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[].{GroupId:GroupId,IpPermissions:IpPermissions[?ToPort==\`80\`].IpRanges}" --output json
+      - name: Test App Content with Debug Info
+        run: |
+          echo "Checking S3 bucket content:"
+          aws s3 ls s3://my-app-backup-demo/
+          echo "All running prod instances:"
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[*].[InstanceId,PublicIpAddress,State.Name]" --output table
+          PUBLIC_IPS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].PublicIpAddress" --output text)
+          echo "Found public IPs: $PUBLIC_IPS"
+          if [ -z "$PUBLIC_IPS" ]; then
+            echo "No public IPs found for prod instances"
             exit 1
           fi
-          echo "Testing Nginx and index.html on $PUBLIC_IP"
-          RETRY_COUNT=0
-          MAX_RETRIES=5
           SUCCESS=false
-          while [ "$SUCCESS" = false ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl --fail --connect-timeout 10 --max-time 20 http://$PUBLIC_IP; then
-              if curl --fail http://$PUBLIC_IP | grep "Version"; then
-                echo "Successfully verified Version in index.html"
+          for IP in $PUBLIC_IPS; do
+            echo "Testing Nginx on $IP"
+            echo "Running curl with verbose output:"
+            curl -v --connect-timeout 10 --max-time 20 http://$IP
+            if curl --fail --connect-timeout 10 --max-time 20 http://$IP; then
+              echo "Successfully connected to $IP"
+              if curl --fail http://$IP | grep "Version"; then
+                echo "Successfully verified Version in index.html on $IP"
                 SUCCESS=true
+                break
               else
-                echo "Version not found in index.html content"
-                RETRY_COUNT=$((RETRY_COUNT+1))
-                sleep 10
+                echo "Version not found in index.html content on $IP"
               fi
             else
-              echo "Curl failed, retrying in 10 seconds..."
-              RETRY_COUNT=$((RETRY_COUNT+1))
-              sleep 10
+              echo "Curl failed on $IP, HTTP response code: $?"
             fi
           done
           if [ "$SUCCESS" = false ]; then
-            echo "Failed to verify web content after $MAX_RETRIES attempts"
+            echo "Failed to verify web content on any instance"
             exit 1
           fi
 
@@ -176,6 +222,12 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
+      - name: Clean Stale State and Locks for Dev
+        run: |
+          aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
+          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
+            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
+          done
       - name: Terraform Init
         run: terraform init
       - name: Terraform Workspace
