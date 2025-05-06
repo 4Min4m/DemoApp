@@ -1,6 +1,5 @@
 variable "environment" {
-  type    = string
-  default = "dev"
+  type = string
 }
 
 variable "vpc_id" {
@@ -12,11 +11,9 @@ variable "subnet_ids" {
 }
 
 variable "ami_id" {
-  type    = string
-  default = "ami-0c55b159cbfafe1f0"
+  type = string
 }
 
 variable "instance_type" {
-  type    = string
-  default = "t2.micro"
+  type = string
 }

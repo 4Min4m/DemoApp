@@ -8,9 +8,10 @@ resource "aws_vpc" "main" {
 }
 
 resource "aws_subnet" "subnet_a" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(var.cidr_block, 8, 1)
-  availability_zone = "us-east-1a"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = cidrsubnet(var.cidr_block, 8, 1)
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
   tags = {
     Name        = "${var.environment}-subnet-a"
     Environment = var.environment
@@ -19,9 +20,10 @@ resource "aws_subnet" "subnet_a" {
 }
 
 resource "aws_subnet" "subnet_b" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(var.cidr_block, 8, 2)
-  availability_zone = "us-east-1b"
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = cidrsubnet(var.cidr_block, 8, 2)
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
   tags = {
     Name        = "${var.environment}-subnet-b"
     Environment = var.environment
@@ -59,15 +61,4 @@ resource "aws_route_table_association" "subnet_a" {
 resource "aws_route_table_association" "subnet_b" {
   subnet_id      = aws_subnet.subnet_b.id
   route_table_id = aws_route_table.main.id
-}
-
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.us-east-1.s3"
-  route_table_ids = [aws_route_table.main.id]
-  tags = {
-    Name        = "${var.environment}-s3-endpoint"
-    Environment = var.environment
-    Project     = "Demo"
-  }
 }
