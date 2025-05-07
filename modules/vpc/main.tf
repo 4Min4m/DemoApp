@@ -77,11 +77,13 @@ resource "aws_route_table" "public" {
 resource "aws_route_table_association" "subnet_a" {
   subnet_id      = aws_subnet.subnet_a.id
   route_table_id = aws_route_table.public.id
+  depends_on     = [aws_route_table.public]
 }
 
 resource "aws_route_table_association" "subnet_b" {
   subnet_id      = aws_subnet.subnet_b.id
   route_table_id = aws_route_table.public.id
+  depends_on     = [aws_route_table.public]
 }
 
 resource "aws_vpc_endpoint" "s3" {
@@ -108,7 +110,7 @@ resource "aws_vpc_endpoint" "s3" {
     Environment = var.environment
     Project     = "Demo"
   }
-  depends_on = [aws_route_table.public, aws_subnet.subnet_a, aws_subnet.subnet_b]
+  depends_on = [aws_route_table.public, aws_route_table_association.subnet_a, aws_route_table_association.subnet_b]
 }
 
 resource "aws_security_group" "vpc_endpoint" {
@@ -156,5 +158,5 @@ resource "aws_vpc_endpoint" "ssm" {
     Environment = var.environment
     Project     = "Demo"
   }
-  depends_on = [aws_subnet.subnet_a, aws_subnet.subnet_b]
+  depends_on = [aws_subnet.subnet_a, aws_subnet.subnet_b, aws_security_group.vpc_endpoint]
 }
