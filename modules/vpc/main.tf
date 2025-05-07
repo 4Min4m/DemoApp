@@ -42,6 +42,26 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
+resource "aws_eip" "nat" {
+  domain = "vpc"
+  tags = {
+    Name        = "${var.environment}-nat-eip"
+    Environment = var.environment
+    Project     = "Demo"
+  }
+}
+
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.subnet_a.id
+  tags = {
+    Name        = "${var.environment}-nat"
+    Environment = var.environment
+    Project     = "Demo"
+  }
+  depends_on = [aws_internet_gateway.main]
+}
+
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   route {
@@ -65,30 +85,11 @@ resource "aws_route_table_association" "subnet_b" {
   route_table_id = aws_route_table.public.id
 }
 
-resource "aws_eip" "nat" {
-  vpc = true
-  tags = {
-    Name        = "${var.environment}-nat-eip"
-    Environment = var.environment
-    Project     = "Demo"
-  }
-}
-
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.subnet_a.id
-  tags = {
-    Name        = "${var.environment}-nat"
-    Environment = var.environment
-    Project     = "Demo"
-  }
-  depends_on = [aws_internet_gateway.main]
-}
-
 resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.us-east-1.s3"
-  route_table_ids = [aws_route_table.public.id]
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.us-east-1.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.public.id]
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -108,6 +109,7 @@ resource "aws_vpc_endpoint" "s3" {
     Environment = var.environment
     Project     = "Demo"
   }
+  depends_on = [aws_route_table.public]
 }
 
 resource "aws_security_group" "vpc_endpoint" {

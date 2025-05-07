@@ -30,6 +30,8 @@ echo "Testing S3 access" | tee -a /var/log/user-data.log
 aws s3 ls s3://my-app-backup-demo/ 2>&1 | tee -a /var/log/user-data.log
 if [ $? -ne 0 ]; then
   echo "ERROR: Failed to access S3 bucket" | tee -a /var/log/user-data.log
+  echo "Testing DNS resolution for S3" | tee -a /var/log/user-data.log
+  dig s3.us-east-1.amazonaws.com | tee -a /var/log/user-data.log
 fi
 
 # Create web directory and ensure permissions
