@@ -43,7 +43,6 @@ resource "aws_internet_gateway" "main" {
 }
 
 resource "aws_eip" "nat" {
-  domain = "vpc"
   tags = {
     Name        = "${var.environment}-nat-eip"
     Environment = var.environment
@@ -109,7 +108,7 @@ resource "aws_vpc_endpoint" "s3" {
     Environment = var.environment
     Project     = "Demo"
   }
-  depends_on = [aws_route_table.public]
+  depends_on = [aws_route_table.public, aws_subnet.subnet_a, aws_subnet.subnet_b]
 }
 
 resource "aws_security_group" "vpc_endpoint" {
@@ -157,4 +156,5 @@ resource "aws_vpc_endpoint" "ssm" {
     Environment = var.environment
     Project     = "Demo"
   }
+  depends_on = [aws_subnet.subnet_a, aws_subnet.subnet_b]
 }
