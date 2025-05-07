@@ -1,5 +1,7 @@
 name: Terraform CI/CD
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
 
@@ -93,13 +95,13 @@ jobs:
         run: |
           echo "Waiting for instances to be fully initialized..."
           RETRY_COUNT=0
-          MAX_RETRIES=15
+          MAX_RETRIES=20
           while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text)
             if [ -n "$INSTANCE_IDS" ]; then
               ALL_READY=true
               for ID in $INSTANCE_IDS; do
-                STATUS=$(aws ec2 describe-instance-status --instance-ids $ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
+                STATUS=$(aws ec2 describe-instance-status --instance-ids $ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text 2>/dev/null || echo "not-ready")
                 if [ "$STATUS" != "ok" ]; then
                   ALL_READY=false
                   break
@@ -118,7 +120,7 @@ jobs:
             echo "Timeout waiting for instances to be ready, but continuing anyway"
           fi
           echo "Giving extra time for user data script to complete..."
-          sleep 60
+          sleep 120
       - name: Verify Security Group
         run: |
           SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
@@ -140,7 +142,6 @@ jobs:
           echo "Checking S3 bucket content:"
           aws s3 ls s3://my-app-backup-demo/
           
-          # Get content of index.html for debugging
           echo "S3 index.html content:"
           aws s3 cp s3://my-app-backup-demo/index.html - || echo "Failed to get S3 content"
           
@@ -152,31 +153,33 @@ jobs:
             exit 1
           fi
           
-          MAX_RETRIES=3
+          MAX_RETRIES=5
           SUCCESS=false
           for IP in $PUBLIC_IPS; do
             echo "Testing Nginx on $IP"
             for i in $(seq 1 $MAX_RETRIES); do
               echo "Attempt $i of $MAX_RETRIES..."
+              
               HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 http://$IP)
               echo "HTTP response code: $HTTP_CODE"
               
               if [ "$HTTP_CODE" == "200" ]; then
-                if curl -s http://$IP | grep -q "Version"; then
+                CONTENT=$(curl -s http://$IP)
+                echo "Content received: $CONTENT"
+                if echo "$CONTENT" | grep -q "Version"; then
                   echo "Successfully verified Version in index.html on $IP"
                   SUCCESS=true
                   break 2
                 else
                   echo "Version not found in index.html content on $IP"
-                  curl -s http://$IP
                 fi
               else
                 echo "HTTP response code $HTTP_CODE from $IP"
               fi
               
               if [ $i -lt $MAX_RETRIES ]; then
-                echo "Retrying in 15 seconds..."
-                sleep 15
+                echo "Retrying in 20 seconds..."
+                sleep 20
               fi
             done
             
@@ -189,12 +192,13 @@ jobs:
                 COMMAND_ID=$(aws ssm send-command \
                   --instance-ids "$INSTANCE_ID" \
                   --document-name "AWS-RunShellScript" \
-                  --parameters '{"commands":["cat /var/log/cloud-init-output.log; cat /var/log/nginx/error.log"]}' \
-                  --query "Command.CommandId" \
-                  --output text 2>/dev/null || echo "")
+                  --parameters '{"commands":["systemctl status nginx", "cat /var/log/cloud-init-output.log | tail -n 50", "cat /var/log/nginx/error.log | tail -n 20", "cat /var/log/user-data.log | tail -n 50", "ls -la /usr/share/nginx/html/"]}' \
+                  --output text \
+                  --query "Command.CommandId" 2>/dev/null || echo "")
+                
                 if [ -n "$COMMAND_ID" ]; then
                   echo "Command ID: $COMMAND_ID"
-                  sleep 30
+                  sleep 60
                   aws ssm get-command-invocation \
                     --command-id "$COMMAND_ID" \
                     --instance-id "$INSTANCE_ID" \
@@ -213,30 +217,3 @@ jobs:
             echo "Failed to verify web content on any instance"
             exit 1
           fi
-
-  cleanup-dev:
-    name: Clean Dev Environment
-    needs: terraform-prod
-    runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: us-east-1
-    steps:
-      - uses: actions/checkout@v3
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.0
-      - name: Clean Stale State and Locks
-        run: |
-          aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
-          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
-            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
-          done
-      - name: Terraform Init
-        run: terraform init
-      - name: Terraform Workspace
-        run: terraform workspace select dev 2>/dev/null || terraform workspace new dev
-      - name: Destroy Dev Environment
-        run: terraform destroy -var="environment=dev" -auto-approve
