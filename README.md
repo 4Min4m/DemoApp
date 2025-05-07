@@ -56,6 +56,3 @@ This is a lightweight AWS infrastructure demo showcasing Terraform, CI/CD, monit
 ## Scenarios
 - **Auto Scaling**: Simulate high CPU with `stress` on an EC2 instance to trigger scaling.
 - **High Availability/DR**: Terminate one EC2 instance; Auto Scaling replaces it in another AZ.
-
-## Cleanup
-Run `terraform destroy` to avoid costs.
