@@ -13,7 +13,7 @@ module "ec2" {
   environment   = var.environment
   vpc_id        = module.vpc.vpc_id
   subnet_ids    = module.vpc.public_subnet_ids
-  ami_id        = "ami-0ebfd94a9ff6dc9d3" # Amazon Linux 2
+  ami_id        = "ami-0f88e80871fd81e91"
   instance_type = "t2.micro"
 }
 

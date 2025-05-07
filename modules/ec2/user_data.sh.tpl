@@ -8,8 +8,8 @@ systemctl stop kestrel || true
 pkill -f "dotnet" || true
 
 # Install packages
-yum update -y --skip-broken | tee -a /var/log/user-data.log
-yum install -y nginx aws-cli amazon-ssm-agent | tee -a /var/log/user-data.log
+dnf update -y | tee -a /var/log/user-data.log
+dnf install -y nginx aws-cli amazon-ssm-agent | tee -a /var/log/user-data.log
 
 # Start SSM agent
 systemctl start amazon-ssm-agent | tee -a /var/log/user-data.log
