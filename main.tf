@@ -26,12 +26,21 @@ resource "aws_s3_bucket" "backup" {
   }
 }
 
+resource "aws_s3_bucket_ownership_controls" "backup_ownership" {
+  bucket = aws_s3_bucket.backup.id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+
 resource "aws_s3_bucket_public_access_block" "public_access" {
   bucket                  = aws_s3_bucket.backup.id
   block_public_acls       = false
   block_public_policy     = false
   ignore_public_acls      = false
   restrict_public_buckets = false
+
+  depends_on = [aws_s3_bucket_ownership_controls.backup_ownership]
 }
 
 resource "aws_s3_bucket_policy" "allow_ec2_access" {
@@ -42,7 +51,7 @@ resource "aws_s3_bucket_policy" "allow_ec2_access" {
       {
         Effect    = "Allow"
         Principal = {
-          AWS = module.ec2.instance_role_arn # ARN نقش EC2
+          AWS = module.ec2.instance_role_arn
         }
         Action    = ["s3:GetObject", "s3:ListBucket"]
         Resource  = [
@@ -57,7 +66,7 @@ resource "aws_s3_bucket_policy" "allow_ec2_access" {
 }
 
 resource "aws_s3_object" "index_html" {
-  bucket       = aws_s3_bucket.backup.bucket
+  bucket       = aws_s3_bucket.backup.id
   key          = "index.html"
   source       = "app/index.html"
   content_type = "text/html"
