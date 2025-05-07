@@ -13,7 +13,7 @@ module "ec2" {
   environment   = var.environment
   vpc_id        = module.vpc.vpc_id
   subnet_ids    = module.vpc.public_subnet_ids
-  ami_id        = "ami-0ebfd94a9ff6dc9d3"
+  ami_id        = "ami-0ebfd94a9ff6dc9d3" # Amazon Linux 2
   instance_type = "t2.micro"
 }
 
@@ -39,7 +39,6 @@ resource "aws_s3_bucket_public_access_block" "public_access" {
   block_public_policy     = false
   ignore_public_acls      = false
   restrict_public_buckets = false
-
   depends_on = [aws_s3_bucket_ownership_controls.backup_ownership]
 }
 
@@ -61,7 +60,6 @@ resource "aws_s3_bucket_policy" "allow_ec2_access" {
       }
     ]
   })
-
   depends_on = [aws_s3_bucket_public_access_block.public_access]
 }
 
@@ -71,6 +69,5 @@ resource "aws_s3_object" "index_html" {
   source       = "app/index.html"
   content_type = "text/html"
   acl          = "public-read"
-
   depends_on = [aws_s3_bucket_public_access_block.public_access]
 }

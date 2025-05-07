@@ -9,31 +9,6 @@ resource "aws_vpc" "main" {
   }
 }
 
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.us-east-1.s3"
-  route_table_ids = [aws_route_table.main.id]
-  tags = {
-    Name        = "${var.environment}-s3-endpoint"
-    Environment = var.environment
-    Project     = "Demo"
-  }
-}
-
-resource "aws_vpc_endpoint" "ssm" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.us-east-1.ssm"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
-  security_group_ids  = [aws_security_group.web.id]
-  private_dns_enabled = true
-  tags = {
-    Name        = "${var.environment}-ssm-endpoint"
-    Environment = var.environment
-    Project     = "Demo"
-  }
-}
-
 resource "aws_subnet" "subnet_a" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.cidr_block, 8, 1)
@@ -88,4 +63,51 @@ resource "aws_route_table_association" "subnet_a" {
 resource "aws_route_table_association" "subnet_b" {
   subnet_id      = aws_subnet.subnet_b.id
   route_table_id = aws_route_table.main.id
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id       = aws_vpc.main.id
+  service_name = "com.amazonaws.us-east-1.s3"
+  route_table_ids = [aws_route_table.main.id]
+  tags = {
+    Name        = "${var.environment}-s3-endpoint"
+    Environment = var.environment
+    Project     = "Demo"
+  }
+}
+
+resource "aws_security_group" "vpc_endpoint" {
+  name_prefix = "${var.environment}-vpc-endpoint-"
+  vpc_id      = aws_vpc.main.id
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # محدود کردن در صورت نیاز
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name        = "${var.environment}-vpc-endpoint-sg"
+    Environment = var.environment
+    Project     = "Demo"
+  }
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.us-east-1.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.subnet_a.id, aws_subnet.subnet_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoint.id]
+  private_dns_enabled = true
+  tags = {
+    Name        = "${var.environment}-ssm-endpoint"
+    Environment = var.environment
+    Project     = "Demo"
+  }
 }
