@@ -26,26 +26,6 @@ resource "aws_s3_bucket" "backup" {
   }
 }
 
-resource "aws_s3_bucket_policy" "allow_ec2_access" {
-  bucket = aws_s3_bucket.backup.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = ["s3:GetObject"]
-        Resource  = "${aws_s3_bucket.backup.arn}/*"
-        Condition = {
-          StringEquals = {
-            "aws:PrincipalTag/Project": "Demo"
-          }
-        }
-      }
-    ]
-  })
-}
-
 resource "aws_s3_bucket_public_access_block" "public_access" {
   bucket                  = aws_s3_bucket.backup.id
   block_public_acls       = false
@@ -54,10 +34,34 @@ resource "aws_s3_bucket_public_access_block" "public_access" {
   restrict_public_buckets = false
 }
 
+resource "aws_s3_bucket_policy" "allow_ec2_access" {
+  bucket = aws_s3_bucket.backup.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = {
+          AWS = module.ec2.instance_role_arn # ARN نقش EC2
+        }
+        Action    = ["s3:GetObject", "s3:ListBucket"]
+        Resource  = [
+          "${aws_s3_bucket.backup.arn}",
+          "${aws_s3_bucket.backup.arn}/*"
+        ]
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.public_access]
+}
+
 resource "aws_s3_object" "index_html" {
   bucket       = aws_s3_bucket.backup.bucket
   key          = "index.html"
   source       = "app/index.html"
   content_type = "text/html"
   acl          = "public-read"
+
+  depends_on = [aws_s3_bucket_public_access_block.public_access]
 }
