@@ -120,7 +120,7 @@ jobs:
             echo "Timeout waiting for instances to be ready, but continuing anyway"
           fi
           echo "Giving extra time for user data script to complete..."
-          sleep 180
+          sleep 90
       - name: Verify Security Group
         run: |
           SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
