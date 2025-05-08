@@ -2,8 +2,6 @@ provider "aws" {
   region = "us-east-1"
 }
 
-provider "random" {}
-
 module "vpc" {
   source      = "./modules/vpc"
   environment = var.environment
@@ -19,14 +17,8 @@ module "ec2" {
   instance_type = "t2.micro"
 }
 
-resource "random_string" "bucket_suffix" {
-  length  = 8
-  special = false
-  upper   = false
-}
-
 resource "aws_s3_bucket" "backup" {
-  bucket = "my-app-backup-demo-${random_string.bucket_suffix.result}"
+  bucket = "my-app-backup-demo"
   tags = {
     Name        = "${var.environment}-backup"
     Environment = var.environment

@@ -36,29 +36,14 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      - name: Verify AWS Credentials
-        run: aws sts get-caller-identity
-      - name: Clean Stale State and Locks
-        run: |
-          aws s3 rm s3://my-terraform-state-demo-231/env:dev/ --recursive || true
-          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:dev" | while read -r LOCK_ID; do
-            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
-          done
       - name: Terraform Init
         run: terraform init
       - name: Terraform Workspace
-        run: |
-          terraform workspace select dev 2>/dev/null || terraform workspace new dev
+        run: terraform workspace select dev 2>/dev/null || terraform workspace new dev
       - name: Terraform Plan Dev
         run: terraform plan -var="environment=dev" -out=tfplan
       - name: Terraform Apply Dev
         run: terraform apply -auto-approve tfplan
-      - name: Debug Dev Resources
-        run: |
-          echo "Listing Auto Scaling Groups for dev:"
-          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='dev']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity}" --output json
-          echo "Listing EC2 Instances for dev:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=dev" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name}" --output json
 
   terraform-prod:
     name: Deploy Production Environment
@@ -74,146 +59,35 @@ jobs:
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-      - name: Verify AWS Credentials
-        run: aws sts get-caller-identity
-      - name: Clean Stale State and Locks
-        run: |
-          aws s3 rm s3://my-terraform-state-demo-231/env:prod/ --recursive || true
-          aws dynamodb scan --table-name terraform-locks --query "Items[].LockID.S" --output text | grep "env:prod" | while read -r LOCK_ID; do
-            aws dynamodb delete-item --table-name terraform-locks --key "{\"LockID\":{\"S\":\"$LOCK_ID\"}}" || true
-          done
       - name: Terraform Init
         run: terraform init
       - name: Terraform Workspace
-        run: |
-          terraform workspace select prod 2>/dev/null || terraform workspace new prod
+        run: terraform workspace select prod 2>/dev/null || terraform workspace new prod
       - name: Terraform Plan Prod
         run: terraform plan -var="environment=prod" -out=tfplan-prod
       - name: Terraform Apply Prod
         run: terraform apply -auto-approve tfplan-prod
-      - name: Wait for Deployment
-        run: |
-          echo "Waiting for instances to be fully initialized..."
-          RETRY_COUNT=0
-          MAX_RETRIES=20
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId" --output text)
-            if [ -n "$INSTANCE_IDS" ]; then
-              ALL_READY=true
-              for ID in $INSTANCE_IDS; do
-                STATUS=$(aws ec2 describe-instance-status --instance-ids $ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text 2>/dev/null || echo "not-ready")
-                if [ "$STATUS" != "ok" ]; then
-                  ALL_READY=false
-                  break
-                fi
-              done
-              if [ "$ALL_READY" = true ]; then
-                echo "All instances are ready"
-                break
-              fi
-            fi
-            echo "Instances not ready yet, waiting... (attempt $RETRY_COUNT of $MAX_RETRIES)"
-            sleep 30
-            RETRY_COUNT=$((RETRY_COUNT+1))
-          done
-          if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-            echo "Timeout waiting for instances to be ready, but continuing anyway"
-          fi
-          echo "Giving extra time for user data script to complete..."
-          sleep 90
-      - name: Verify Security Group
-        run: |
-          SG_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Environment,Values=prod" --query "SecurityGroups[0].GroupId" --output text)
-          if [ -n "$SG_ID" ]; then
-            echo "Found security group: $SG_ID"
-            aws ec2 describe-security-groups --group-ids $SG_ID
-          else
-            echo "WARNING: Could not find security group for prod environment"
-            exit 1
-          fi
-      - name: Debug Prod Resources
-        run: |
-          echo "Listing Auto Scaling Groups for prod:"
-          aws autoscaling describe-auto-scaling-groups --query "AutoScalingGroups[?Tags[?Key=='Environment' && Value=='prod']].{AutoScalingGroupName:AutoScalingGroupName,DesiredCapacity:DesiredCapacity}" --output json
-          echo "Listing EC2 Instances for prod:"
-          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,PublicIpAddress:PublicIpAddress,State:State.Name}" --output json
       - name: Test App Content
         run: |
-          echo "Checking S3 bucket content:"
-          aws s3 ls s3://my-app-backup-demo/
-          
-          echo "S3 index.html content:"
-          aws s3 cp s3://my-app-backup-demo/index.html - || echo "Failed to get S3 content"
-          
           PUBLIC_IPS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].PublicIpAddress" --output text)
-          echo "Found public IPs: $PUBLIC_IPS"
           if [ -z "$PUBLIC_IPS" ]; then
             echo "No public IPs found for prod instances"
             exit 1
           fi
-          
-          MAX_RETRIES=5
-          SUCCESS=false
           for IP in $PUBLIC_IPS; do
-            echo "Testing Nginx on $IP"
-            for i in $(seq 1 $MAX_RETRIES); do
-              echo "Attempt $i of $MAX_RETRIES..."
-              
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 http://$IP)
-              echo "HTTP response code: $HTTP_CODE"
-              
-              if [ "$HTTP_CODE" == "200" ]; then
-                CONTENT=$(curl -s http://$IP)
-                echo "Content received: $CONTENT"
-                if echo "$CONTENT" | grep -q "Version"; then
-                  echo "Successfully verified Version in index.html on $IP"
-                  SUCCESS=true
-                  break 2
-                else
-                  echo "Version not found in index.html content on $IP"
-                fi
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 http://$IP)
+            if [ "$HTTP_CODE" == "200" ]; then
+              CONTENT=$(curl -s http://$IP)
+              if echo "$CONTENT" | grep -q "Version"; then
+                echo "Successfully verified Version in index.html on $IP"
+                exit 0
               else
-                echo "HTTP response code $HTTP_CODE from $IP"
+                echo "Version not found in index.html content on $IP"
+                exit 1
               fi
-              
-              if [ $i -lt $MAX_RETRIES ]; then
-                echo "Retrying in 20 seconds..."
-                sleep 20
-              fi
-            done
-            
-            INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=ip-address,Values=$IP" --query "Reservations[].Instances[0].InstanceId" --output text)
-            if [ -n "$INSTANCE_ID" ]; then
-              echo "Instance ID for $IP: $INSTANCE_ID"
-              STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceState.Name" --output text 2>/dev/null || echo "invalid")
-              if [ "$STATUS" = "running" ]; then
-                echo "Fetching logs from instance $INSTANCE_ID"
-                COMMAND_ID=$(aws ssm send-command \
-                  --instance-ids "$INSTANCE_ID" \
-                  --document-name "AWS-RunShellScript" \
-                  --parameters '{"commands":["systemctl status nginx", "cat /var/log/cloud-init-output.log | tail -n 50", "cat /var/log/nginx/error.log | tail -n 20", "cat /var/log/user-data.log | tail -n 100", "ls -la /usr/share/nginx/html/", "dig s3.us-east-1.amazonaws.com"]}' \
-                  --output text \
-                  --query "Command.CommandId" 2>/dev/null || echo "")
-                
-                if [ -n "$COMMAND_ID" ]; then
-                  echo "Command ID: $COMMAND_ID"
-                  sleep 90
-                  aws ssm get-command-invocation \
-                    --command-id "$COMMAND_ID" \
-                    --instance-id "$INSTANCE_ID" \
-                    --query "StandardOutputContent" \
-                    --output text 2>/dev/null || echo "Failed to get command output"
-                else
-                  echo "Failed to send SSM command."
-                fi
-              else
-                echo "Instance $INSTANCE_ID is not running, status: $STATUS"
-              fi
+            else
+              echo "HTTP response code $HTTP_CODE from $IP"
+              exit 1
             fi
           done
-          
-          if [ "$SUCCESS" = false ]; then
-            echo "Failed to verify web content on any instance"
-            exit 1
-          fi
