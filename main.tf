@@ -17,24 +17,20 @@ module "ec2" {
   instance_type = "t2.micro"
 }
 
-resource "aws_s3_bucket" "backup" {
+# Reference existing S3 bucket
+data "aws_s3_bucket" "backup" {
   bucket = "my-app-backup-demo"
-  tags = {
-    Name        = "${var.environment}-backup"
-    Environment = var.environment
-    Project     = "Demo"
-  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "backup_ownership" {
-  bucket = aws_s3_bucket.backup.id
+  bucket = data.aws_s3_bucket.backup.id
   rule {
     object_ownership = "BucketOwnerPreferred"
   }
 }
 
 resource "aws_s3_bucket_public_access_block" "public_access" {
-  bucket                  = aws_s3_bucket.backup.id
+  bucket                  = data.aws_s3_bucket.backup.id
   block_public_acls       = false
   block_public_policy     = false
   ignore_public_acls      = false
@@ -43,7 +39,7 @@ resource "aws_s3_bucket_public_access_block" "public_access" {
 }
 
 resource "aws_s3_bucket_policy" "allow_ec2_access" {
-  bucket = aws_s3_bucket.backup.id
+  bucket = data.aws_s3_bucket.backup.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -54,8 +50,8 @@ resource "aws_s3_bucket_policy" "allow_ec2_access" {
         }
         Action    = ["s3:GetObject", "s3:ListBucket"]
         Resource  = [
-          "${aws_s3_bucket.backup.arn}",
-          "${aws_s3_bucket.backup.arn}/*"
+          "${data.aws_s3_bucket.backup.arn}",
+          "${data.aws_s3_bucket.backup.arn}/*"
         ]
       }
     ]
@@ -64,7 +60,7 @@ resource "aws_s3_bucket_policy" "allow_ec2_access" {
 }
 
 resource "aws_s3_object" "index_html" {
-  bucket       = aws_s3_bucket.backup.id
+  bucket       = data.aws_s3_bucket.backup.id
   key          = "index.html"
   source       = "app/index.html"
   content_type = "text/html"
