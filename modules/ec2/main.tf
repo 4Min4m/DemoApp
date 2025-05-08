@@ -24,12 +24,18 @@ resource "aws_iam_policy" "ec2_s3_access" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
         ]
         Resource = [
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}",
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = "s3:ListAllMyBuckets"
+        Resource = "*"
       }
     ]
   })
