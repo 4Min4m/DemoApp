@@ -16,7 +16,7 @@ resource "aws_iam_role" "ec2_role" {
 
 resource "aws_iam_policy" "ec2_s3_access" {
   name        = "${var.environment}-ec2-s3-access"
-  description = "Allow EC2 to access S3 bucket and SSM"
+  description = "Allow EC2 to access S3 bucket"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -30,23 +30,6 @@ resource "aws_iam_policy" "ec2_s3_access" {
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}",
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:DescribeInstanceInformation",
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameters"
-        ]
-        Resource = "arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:parameter/*"
       }
     ]
   })
@@ -55,11 +38,6 @@ resource "aws_iam_policy" "ec2_s3_access" {
 resource "aws_iam_role_policy_attachment" "ec2_s3_access" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = aws_iam_policy.ec2_s3_access.arn
-}
-
-resource "aws_iam_role_policy_attachment" "ssm_managed_instance" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "random_string" "suffix" {
@@ -91,8 +69,6 @@ resource "aws_security_group" "web" {
     Project     = "Demo"
   }
 }
-
-data "aws_caller_identity" "current" {}
 
 resource "aws_launch_template" "web" {
   name_prefix   = "${var.environment}-web-"

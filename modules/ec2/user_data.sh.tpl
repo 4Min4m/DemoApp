@@ -1,13 +1,9 @@
 #!/bin/bash
 set -e
 
-# Install AWS CLI and SSM Agent
+# Install AWS CLI
 dnf update -y
-dnf install -y aws-cli amazon-ssm-agent
-
-# Start SSM agent
-systemctl start amazon-ssm-agent
-systemctl enable amazon-ssm-agent
+dnf install -y aws-cli
 
 # Configure AWS CLI region
 mkdir -p /root/.aws
@@ -29,8 +25,5 @@ fi
 
 # Set permissions
 chmod 644 /usr/share/html/index.html
-
-# Wait for SSM agent to be ready
-sleep 10
 
 echo "Setup complete" >> /var/log/user-data.log
