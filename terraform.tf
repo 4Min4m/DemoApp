@@ -1,19 +1,105 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
-  backend "s3" {
-    bucket         = "my-terraform-state-demo-231"
-    key            = "demo/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "terraform-locks"
-    encrypt        = true
-  }
-}
+name: Terraform CI/CD
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  terraform-validate:
+    name: Validate Terraform Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      - name: Check App File
+        run: test -f app/index.html || (echo "index.html missing!" && exit 1)
+      - name: Terraform Init
+        run: terraform init -backend=false
+      - name: Terraform Validate
+        run: terraform validate
+
+  terraform-dev:
+    name: Deploy Dev Environment
+    needs: terraform-validate
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Workspace
+        run: terraform workspace select dev 2>/dev/null || terraform workspace new dev
+      - name: Terraform Plan Dev
+        run: terraform plan -var="environment=dev" -out=tfplan
+      - name: Terraform Apply Dev
+        run: terraform apply -auto-approve tfplan
+
+  terraform-prod:
+    name: Deploy Production Environment
+    needs: terraform-dev
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+      - name: Terraform Init
+        run: terraform init
+      - name: Terraform Workspace
+        run: terraform workspace select prod 2>/dev/null || terraform workspace new prod
+      - name: Terraform Plan Prod
+        run: terraform plan -var="environment=prod" -out=tfplan-prod
+      - name: Terraform Apply Prod
+        run: terraform apply -auto-approve tfplan-prod
+      - name: Test App Content
+        run: |
+          INSTANCE_IDS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" --output text)
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No running instances found for prod"
+            exit 1
+          fi
+          for ID in $INSTANCE_IDS; do
+            echo "Checking index.html on instance $ID"
+            COMMAND_ID=$(aws ssm send-command \
+              --instance-ids "$ID" \
+              --document-name "AWS-RunShellScript" \
+              --parameters '{"commands":["cat /usr/share/html/index.html"]}' \
+              --output text \
+              --query "Command.CommandId")
+            if [ -n "$COMMAND_ID" ]; then
+              sleep 10
+              CONTENT=$(aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$ID" \
+                --query "StandardOutputContent" \
+                --output text)
+              echo "Content received: $CONTENT"
+              if echo "$CONTENT" | grep -q "Version: 2.0"; then
+                echo "Successfully verified Version: 2.0 in index.html on $ID"
+                exit 0
+              else
+                echo "Version: 2.0 not found in index.html on $ID"
+                exit 1
+              fi
+            else
+              echo "Failed to send SSM command to $ID"
+              exit 1
+            fi
+          done

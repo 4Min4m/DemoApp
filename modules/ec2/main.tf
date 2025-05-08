@@ -30,6 +30,14 @@ resource "aws_iam_policy" "ec2_s3_access" {
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}",
           "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -54,14 +62,6 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 resource "aws_security_group" "web" {
   name_prefix = "${var.environment}-web-"
   vpc_id      = var.vpc_id
-  
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP"
-  }
   
   egress {
     from_port   = 0
