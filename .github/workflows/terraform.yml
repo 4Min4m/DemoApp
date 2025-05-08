@@ -69,16 +69,24 @@ jobs:
         run: terraform apply -auto-approve tfplan-prod
       - name: Test App Content
         run: |
+          echo "Listing instances for prod environment:"
+          aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" --query "Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,PublicIpAddress:PublicIpAddress}" --output json
+          
           PUBLIC_IPS=$(aws ec2 describe-instances --filters "Name=tag:Environment,Values=prod" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].PublicIpAddress" --output text)
+          echo "Found public IPs: $PUBLIC_IPS"
           if [ -z "$PUBLIC_IPS" ]; then
             echo "No public IPs found for prod instances"
             exit 1
           fi
+          
           for IP in $PUBLIC_IPS; do
+            echo "Testing Nginx on $IP"
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 http://$IP)
+            echo "HTTP response code: $HTTP_CODE"
             if [ "$HTTP_CODE" == "200" ]; then
               CONTENT=$(curl -s http://$IP)
+              echo "Content received: $CONTENT"
               if echo "$CONTENT" | grep -q "Version"; then
                 echo "Successfully verified Version in index.html on $IP"
                 exit 0
