@@ -25,7 +25,7 @@ chown -R nginx:nginx /usr/share/nginx/html
 
 # Download index.html from S3
 echo "Attempting to download index.html from S3" > /var/log/user-data.log
-aws s3 cp s3://my-app-backup-demo-${var.bucket_suffix}/index.html /usr/share/nginx/html/index.html 2>> /var/log/user-data.log
+aws s3 cp s3://my-app-backup-demo-${bucket_suffix}/index.html /usr/share/nginx/html/index.html 2>> /var/log/user-data.log
 if [ $? -eq 0 ]; then
   echo "Successfully downloaded index.html from S3" >> /var/log/user-data.log
 else
