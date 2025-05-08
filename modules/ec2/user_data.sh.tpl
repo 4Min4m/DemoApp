@@ -30,4 +30,7 @@ fi
 # Set permissions
 chmod 644 /usr/share/html/index.html
 
+# Wait for SSM agent to be ready
+sleep 10
+
 echo "Setup complete" >> /var/log/user-data.log
