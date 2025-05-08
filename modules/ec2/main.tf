@@ -14,6 +14,32 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
+resource "aws_iam_policy" "ec2_s3_access" {
+  name        = "${var.environment}-ec2-s3-access"
+  description = "Allow EC2 to access S3 bucket"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}",
+          "arn:aws:s3:::my-app-backup-demo-${random_string.suffix.result}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_s3_access" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = aws_iam_policy.ec2_s3_access.arn
+}
+
 resource "random_string" "suffix" {
   length  = 8
   special = false
@@ -63,7 +89,9 @@ resource "aws_launch_template" "web" {
     http_put_response_hop_limit = 2
   }
   
-  user_data = base64encode(file("${path.module}/user_data.sh.tpl"))
+  user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
+    bucket_suffix = random_string.suffix.result
+  }))
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_profile.name
