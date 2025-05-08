@@ -1,5 +1,5 @@
 resource "aws_iam_role" "ec2_role" {
-  name = "${var.environment}-ec2-role"
+  name = "${var.environment}-ec2-role-${random_string.suffix.result}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -14,51 +14,14 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
-resource "aws_iam_role_policy" "ec2_policy" {
-  name = "${var.environment}-ec2-policy"
-  role = aws_iam_role.ec2_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "arn:aws:s3:::my-app-backup-demo",
-          "arn:aws:s3:::my-app-backup-demo/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:UpdateInstanceInformation",
-          "ssm:ListInstanceAssociations",
-          "ssm:GetDocument",
-          "ssm:GetManifest",
-          "ssm:GetParameter*",
-          "ssm:GetParameters",
-          "ssmmessages:CreateControlChannel",
-          "ssmmessages:CreateDataChannel",
-          "ssmmessages:OpenControlChannel",
-          "ssmmessages:OpenDataChannel",
-          "ec2messages:*"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ssm_policy" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "${var.environment}-ec2-profile"
+  name = "${var.environment}-ec2-profile-${random_string.suffix.result}"
   role = aws_iam_role.ec2_role.name
 }
 
@@ -100,7 +63,7 @@ resource "aws_launch_template" "web" {
     http_put_response_hop_limit = 2
   }
   
-  user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {}))
+  user_data = base64encode(file("${path.module}/user_data.sh.tpl"))
   
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_profile.name
